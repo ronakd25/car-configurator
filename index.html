@@ -1,17 +1,140 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Car Viewer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { margin: 0; overflow: hidden; }
-    canvas { display: block; }
+    html,body { height:100%; margin:0; }
+    body { overflow:hidden; background:#f4f4f4; font-family:system-ui, Arial, sans-serif; }
+    #hud {
+      position:fixed; top:10px; left:10px;
+      background:rgba(255,255,255,0.9); padding:8px 10px; border-radius:8px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.15); font-size:13px; max-width:60vw;
+    }
+    #hud b { color:#333; }
+    canvas { display:block; }
   </style>
 </head>
 <body>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
-  <script src="script.js"></script>
+  <div id="hud">Status: <b>loading…</b></div>
+
+  <!-- Non-module (simpler) scripts so it works anywhere, including GitHub Pages -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script>
+    // ---- basics ----
+    const hud = document.getElementById('hud');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f0f0);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+    camera.position.set(0, 1.5, 6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Lights
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.0));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    dir.position.set(5, 10, 7);
+    scene.add(dir);
+
+    // Ground grid (just so you see something even before model loads)
+    const grid = new THREE.GridHelper(50, 50, 0x888888, 0xcccccc);
+    grid.position.y = -0.001;
+    scene.add(grid);
+
+    // Tiny spinner cube to prove 3D is rendering even if model fails
+    const spinner = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2,0.2,0.2),
+      new THREE.MeshStandardMaterial({ color: 0x3a7 })
+    );
+    spinner.position.set(-1, 0.3, 0);
+    scene.add(spinner);
+
+    // ---- helpers ----
+    function setStatus(msg) { hud.innerHTML = 'Status: <b>' + msg + '</b>'; }
+
+    function frameObject(obj, padding = 1.2) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const center = new THREE.Vector3(); box.getCenter(center);
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = camera.fov * (Math.PI / 180);
+      let dist = (maxDim/2) / Math.tan(fov/2);
+      dist *= padding;
+
+      const dirToCam = new THREE.Vector3(0, 0.2, 1).normalize(); // slight top/front angle
+      camera.position.copy(center).addScaledVector(dirToCam, dist);
+      camera.near = dist/50; camera.far = dist*50; camera.updateProjectionMatrix();
+      controls.target.copy(center);
+      controls.update();
+    }
+
+    function loadModel(url, onDone) {
+      const loader = new THREE.GLTFLoader();
+      loader.setCrossOrigin('anonymous');
+      loader.load(url, (gltf) => {
+        const model = gltf.scene || gltf.scenes[0];
+        scene.add(model);
+        frameObject(model);
+        setStatus('loaded: ' + url);
+        onDone && onDone(null, model);
+      }, (prog) => {
+        if (prog.total) {
+          const pct = Math.round((prog.loaded / prog.total) * 100);
+          setStatus('loading ' + url + ' … ' + pct + '%');
+        } else {
+          setStatus('loading ' + url + ' …');
+        }
+      }, (err) => {
+        console.error('GLB load error for', url, err);
+        setStatus('❌ failed to load: ' + url);
+        onDone && onDone(err);
+      });
+    }
+
+    // ---- try local car.glb, else fallback ----
+    const LOCAL = 'car.glb';
+    const FALLBACK = 'https://threejs.org/examples/models/gltf/Duck.glb'; // tiny, always available
+
+    // Check if car.glb exists on the same origin (HEAD request).
+    fetch(LOCAL, { method: 'HEAD' })
+      .then(res => {
+        if (res.ok) {
+          loadModel(LOCAL);
+        } else {
+          setStatus('car.glb not found (HTTP ' + res.status + '), loading fallback…');
+          loadModel(FALLBACK);
+        }
+      })
+      .catch(() => {
+        setStatus('car.glb not reachable, loading fallback…');
+        loadModel(FALLBACK);
+      });
+
+    // ---- render loop ----
+    function animate() {
+      requestAnimationFrame(animate);
+      spinner.rotation.y += 0.02;
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
 </body>
 </html>
